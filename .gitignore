@@ -1,0 +1,14 @@
+tokens.json
+secrets.json
+__pycache__/
+*.pyc
+venv/
+.env
+.DS_Store
+.pytest_cache/
+*.log
+.coverage
+build/
+dist/
+node_modules/
+.claude/
