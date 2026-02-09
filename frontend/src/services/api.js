@@ -14,8 +14,8 @@ export const api = {
 
   bookSlot: async (slot, userDetails) => {
     const response = await axios.post(`${API_URL}/booking/book`, {
-      start: slot.start,
-      end: slot.end,
+      start: slot.raw.start,
+      end: slot.raw.end,
       email: userDetails.email,
       first_name: userDetails.firstName,
       last_name: userDetails.lastName
