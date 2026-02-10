@@ -8,14 +8,13 @@ export const useBooking = () => {
   const [llmInput, setLlmInput] = useState(null);
   const [llmOutput, setLlmOutput] = useState(null);
   const [bookingStatus, setBookingStatus] = useState({});
+  const [timezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
 
   const fetchSlots = async (feedback, testMode) => {
     setLoading(true);
     setMessage("");
     setLlmInput(null);
     setLlmOutput(null);
-    
-    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     
     try {
       const data = await api.suggestSlots(timezone, feedback, testMode);
@@ -72,6 +71,7 @@ export const useBooking = () => {
     llmInput,
     llmOutput,
     bookingStatus,
+    timezone,
     fetchSlots,
     bookSlot
   };

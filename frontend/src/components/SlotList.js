@@ -1,6 +1,6 @@
 import React from 'react';
 
-const SlotList = ({ slots, bookingStatus, onBook, hasSuccessfulBooking }) => {
+const SlotList = ({ slots, bookingStatus, onBook, hasSuccessfulBooking, timezone }) => {
   // Group slots by date
   const groupedSlots = slots.reduce((acc, slot) => {
     const dateStr = slot.start.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -13,6 +13,11 @@ const SlotList = ({ slots, bookingStatus, onBook, hasSuccessfulBooking }) => {
 
   return (
     <div className="slots-container">
+      {timezone && (
+        <div style={{ textAlign: 'right', fontSize: '0.85rem', color: '#6c757d', marginBottom: '-1rem' }}>
+          Times shown in {timezone.replace(/_/g, ' ')}
+        </div>
+      )}
       {Object.keys(groupedSlots).map(date => (
         <div key={date} className="day-group">
           <h3 className="day-header">{date}</h3>

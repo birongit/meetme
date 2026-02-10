@@ -13,7 +13,7 @@ const UserForm = ({
         <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', color: '#333' }}>
           What is your name?
         </label>
-        <div style={{ display: 'flex', gap: '10px' }}>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           <input
             type="text"
             placeholder="First Name"
@@ -22,9 +22,9 @@ const UserForm = ({
               setFirstName(e.target.value);
               if (nameError) setNameError("");
             }}
-            style={{ 
-              flex: 1,
-              padding: '10px', 
+            style={{
+              flex: '1 1 140px',
+              padding: '10px',
               border: nameError ? '1px solid red' : '1px solid #ccc',
               borderRadius: '4px',
               fontSize: '1rem',
@@ -39,9 +39,9 @@ const UserForm = ({
               setLastName(e.target.value);
               if (nameError) setNameError("");
             }}
-            style={{ 
-              flex: 1,
-              padding: '10px', 
+            style={{
+              flex: '1 1 140px',
+              padding: '10px',
               border: nameError ? '1px solid red' : '1px solid #ccc',
               borderRadius: '4px',
               fontSize: '1rem',

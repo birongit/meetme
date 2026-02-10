@@ -12,7 +12,7 @@ class SlotList(BaseModel):
 class BookingRequest(BaseModel):
     start: str
     end: str
-    summary: Optional[str] = "Booked Meeting"
+    summary: Optional[str] = None
     email: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None

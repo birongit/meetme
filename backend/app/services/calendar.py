@@ -226,10 +226,7 @@ class CalendarService:
         tz = start_dt.tzinfo or timezone.utc
         CalendarService.validate_slot(start_dt, end_dt, tz)
 
-        first = slot_data.get('first_name', '')
-        last = slot_data.get('last_name', '')
-        guest_name = f"{first} {last}".strip()
-        default_summary = f"Meeting with {guest_name}" if guest_name else 'Booked Meeting'
+        default_summary = 'Meeting with Birgit'
 
         event = {
             'summary': slot_data.get('summary') or default_summary,

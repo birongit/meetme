@@ -29,14 +29,15 @@ function App() {
 
   // Logic Hook
   const { 
-    slots, 
-    loading, 
-    message, 
-    llmInput, 
-    llmOutput, 
-    bookingStatus, 
-    fetchSlots, 
-    bookSlot 
+    slots,
+    loading,
+    message,
+    llmInput,
+    llmOutput,
+    bookingStatus,
+    timezone,
+    fetchSlots,
+    bookSlot
   } = useBooking();
 
   const handleFetch = () => {
@@ -84,11 +85,12 @@ function App() {
             emailError={emailError} setEmailError={setEmailError}
           />
 
-          <SlotList 
+          <SlotList
             slots={slots}
             bookingStatus={bookingStatus}
             onBook={handleBook}
             hasSuccessfulBooking={hasSuccessfulBooking}
+            timezone={timezone}
           />
 
           <FeedbackForm 
