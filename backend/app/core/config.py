@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     
     # Google AI (Gemini)
     GOOGLE_AI_API_KEY: Optional[str] = None
+
+    # Heroku (for persisting tokens)
+    HEROKU_API_KEY: Optional[str] = None
+    HEROKU_APP_NAME: Optional[str] = None
     
     # Files (Legacy/Local)
     SECRETS_FILE: str = "secrets.json"

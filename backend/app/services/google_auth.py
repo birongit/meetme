@@ -1,5 +1,6 @@
 import json
 import logging
+import urllib.request
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
@@ -79,6 +80,25 @@ class GoogleAuthService:
         token_path = settings.get_file_path(settings.TOKEN_FILE)
         with open(token_path, "w") as f:
             json.dump(token_data, f)
+
+        # Persist to Heroku config var if configured
+        if settings.HEROKU_API_KEY and settings.HEROKU_APP_NAME:
+            try:
+                req = urllib.request.Request(
+                    f"https://api.heroku.com/apps/{settings.HEROKU_APP_NAME}/config-vars",
+                    data=json.dumps({"GOOGLE_TOKEN_JSON": json.dumps(token_data)}).encode(),
+                    headers={
+                        "Authorization": f"Bearer {settings.HEROKU_API_KEY}",
+                        "Content-Type": "application/json",
+                        "Accept": "application/vnd.heroku+json; version=3",
+                    },
+                    method="PATCH",
+                )
+                urllib.request.urlopen(req)
+                logger.info("Token persisted to Heroku config var")
+            except Exception as e:
+                logger.error("Failed to persist token to Heroku: %s", e)
+
         return token_data
 
     @staticmethod
