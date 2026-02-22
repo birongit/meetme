@@ -70,8 +70,28 @@ def test_book_meeting_success():
 def test_book_meeting_invalid_email():
     # The validation happens in the service, so we mock the service raising ValueError
     slot_data = {"start": "2025-01-02T10:00:00Z", "end": "2025-01-02T11:00:00Z", "email": "invalid-email"}
-    
+
     with patch("app.api.routes.CalendarService.book_slot", side_effect=ValueError("Invalid email address provided.")):
         response = client.post("/booking/book", json=slot_data)
         assert response.status_code == 400
         assert "Invalid email" in response.json()["error"]
+
+def test_suggest_booking_ai_passes_timezone():
+    """Verifies that user_tz is forwarded to AIService.rank_slots()."""
+    mock_slots = [{"start": "2025-01-02T10:00:00Z", "end": "2025-01-02T11:00:00Z"}]
+    mock_ai_result = {
+        "suggested_slots": mock_slots,
+        "ai_message": "Here are some slots.",
+        "llm_input": "...",
+        "llm_output": "..."
+    }
+
+    with patch("app.api.routes.CalendarService.get_available_slots", return_value=mock_slots) as mock_cal, \
+         patch("app.api.routes.AIService.rank_slots", return_value=mock_ai_result) as mock_rank:
+
+        payload = {"timezone": "America/New_York", "user_feedback": "afternoon please"}
+        response = client.post("/booking/suggest-ai", json=payload)
+
+        assert response.status_code == 200
+        # Verify rank_slots was called with user_tz keyword argument
+        mock_rank.assert_called_once_with(mock_slots, "afternoon please", user_tz="America/New_York")

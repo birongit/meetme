@@ -1,7 +1,7 @@
 import logging
 from typing import List, Dict, Any
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate
@@ -11,6 +11,7 @@ from langchain.output_parsers import PydanticOutputParser
 from app.core.config import settings
 from app.models.schemas import SlotList
 from app.services.preferences import PreferencesService
+from app.services.calendar import CalendarService
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +33,29 @@ def get_days_of_week(date_strings: List[str]) -> Dict[str, str]:
 
 class AIService:
     @staticmethod
-    def rank_slots(legal_slots: List[Dict[str, str]], user_feedback: str = None) -> Dict[str, Any]:
+    def rank_slots(legal_slots: List[Dict[str, str]], user_feedback: str = None, user_tz: str = None) -> Dict[str, Any]:
         """
         Uses LLM to rank and select the best slots based on user feedback and preferences.
         """
+        # Collect any extra slots fetched by the agent tool
+        extra_fetched_slots: List[Dict[str, str]] = []
+
+        @tool
+        def fetch_available_slots(start_date: str, end_date: str) -> str:
+            """Fetch available 1-hour meeting slots for any date range, including weeks or months in the future.
+            The range between start_date and end_date can be up to 14 days per call.
+            Args:
+                start_date: Start date in YYYY-MM-DD format (can be any future date)
+                end_date: End date in YYYY-MM-DD format (up to 14 days after start_date)
+            Returns:
+                A text list of available slots in the requested range.
+            """
+            slots = CalendarService.get_available_slots(user_tz, start_date, end_date)
+            extra_fetched_slots.extend(slots)
+            if not slots:
+                return "No available slots found in that date range."
+            return "\n".join(f"- {s['start']} to {s['end']}" for s in slots)
+
         # Limit slots to avoid token limits, but sample evenly across days
         # so that later days (e.g. Friday/Saturday) aren't cut off
         max_slots = 50
@@ -55,19 +75,19 @@ class AIService:
             return {"error": "No legal slots available."}
 
         prefs = PreferencesService.get_preferences()
-        
+
         slot_list_str = "\n".join([
             f"- {slot['start']} to {slot['end']}" for slot in legal_slots_subset
         ])
-        
+
         owner_prefs_str = "Calendar Owner Preferences (Internal Guidelines - try to follow these but prioritize User Request if valid):\n"
         if prefs.get('batch_meetings'):
             owner_prefs_str += "- Try to batch meetings together if possible.\n"
         owner_prefs_str += "- Avoid meetings after 21:00 if possible.\n"
         owner_prefs_str += "- Prefer weekends over weekdays, but offer a few weekday options for diversity if the user didn't specify.\n"
-        
+
         parser = PydanticOutputParser(pydantic_object=SlotList)
-        format_instructions = parser.get_format_instructions()
+        json_hint = 'Return JSON: {"slots": [{"start": "...", "end": "..."}], "message": "..."}'
 
         user_request_str = "User Request (The user is asking for this):\n"
         if user_feedback:
@@ -75,41 +95,55 @@ class AIService:
         else:
             user_request_str += "- (No specific request)\n"
 
-        prompt = (
-            f"Here is a list of all legal 1-hour meeting slots for the next 7 days (fully respecting blocked times and busy events):\n"
-            f"{slot_list_str}\n\n"
-            f"{owner_prefs_str}\n"
-            f"{user_request_str}\n"
-            "Please select and rank 5-10 diverse options for the user.\n"
-            "INSTRUCTIONS FOR 'message' FIELD:\n"
-            "- Address the USER directly.\n"
-            "- Explain why these slots are good matches for THEIR request.\n"
-            "- Ensure your message accurately describes the slots you selected (e.g. do not claim to show weekdays if you only selected weekends).\n"
-            "- Do NOT explicitly mention 'Owner Preferences' or 'Internal Guidelines' unless necessary to explain a constraint.\n"
-            "- Be friendly and helpful.\n"
-            f"{format_instructions}"
-        )
-        
+        if user_feedback:
+            # Round 2: bare-bones — just fetch and return slots
+            prompt = (
+                f"Today is {datetime.now().strftime('%Y-%m-%d (%A)')}.\n\n"
+                f"{user_request_str}\n"
+                "Call fetch_available_slots for the relevant date range, then select 5-10 of the best options and return them as JSON: "
+                '{"slots": [{"start": "...", "end": "..."}], "message": "..."}'
+            )
+        else:
+            # Round 1: Provide pre-loaded slots for quick selection
+            prompt = (
+                f"Today is {datetime.now().strftime('%Y-%m-%d (%A)')}.\n\n"
+                f"{user_request_str}\n"
+                f"{owner_prefs_str}\n"
+                f"Available slots:\n"
+                f"{slot_list_str}\n\n"
+                "Select and rank 5-10 diverse options. Address the user directly in the message field, explain why the slots match their request, and be friendly.\n"
+                f"{json_hint}"
+            )
+
         llm = ChatGoogleGenerativeAI(
             google_api_key=settings.GOOGLE_AI_API_KEY,
             model="gemini-2.0-flash",
             temperature=0,
         )
-        
-        tools = [get_days_of_week]
-        
+
+        tools = [get_days_of_week, fetch_available_slots]
+
         prompt_template = ChatPromptTemplate.from_messages([
-            ("system", "You are a helpful booking assistant. You have access to a tool `get_days_of_week` that can tell you the day name for a list of dates. Use it whenever you need to verify dates to answer the user's request (e.g. 'find slots on Friday'). When you have selected the slots, you MUST return the result as a JSON object matching the specified format. Put any friendly message in the 'message' field."),
+            ("system", "You are a helpful booking assistant. Use your tools to find information you need. Return the result as a JSON object matching the specified format."),
             ("human", "{input}"),
             ("placeholder", "{agent_scratchpad}"),
         ])
-        
+
         agent = create_tool_calling_agent(llm, tools, prompt_template)
-        agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=False)
-        
+        agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, return_intermediate_steps=True)
+
         result = agent_executor.invoke({"input": prompt})
         response_content = result["output"]
-        
+        intermediate_steps = result.get("intermediate_steps", [])
+
+        # Log intermediate steps for debugging
+        agent_steps = []
+        for step in intermediate_steps:
+            action, observation = step
+            step_info = {"tool": action.tool, "input": action.tool_input, "output": str(observation)}
+            agent_steps.append(step_info)
+            logger.info("Agent tool call: %s(%s) -> %s", action.tool, action.tool_input, str(observation)[:200])
+
         try:
             # Clean up response content
             cleaned_response = response_content.strip()
@@ -119,36 +153,75 @@ class AIService:
                 cleaned_response = cleaned_response.split("```")[1].split("```")[0].strip()
 
             parsed_result = parser.parse(cleaned_response)
-            
+
             # Post-validation: Ensure returned slots are actually in the legal_slots list
-            # We create a set of signatures "start|end" for O(1) lookup
-            legal_signatures = {f"{s['start']}|{s['end']}" for s in legal_slots}
-            
+            # Include any extra slots fetched by the agent tool
+            all_legal_slots = legal_slots + extra_fetched_slots
+            legal_signatures = {f"{s['start']}|{s['end']}" for s in all_legal_slots}
+
+            # Determine the boundary of pre-loaded slots
+            preloaded_max = max(s['start'] for s in legal_slots) if legal_slots else ""
+
             validated_slots = []
+            out_of_range_dates = set()
             for slot in parsed_result.slots:
                 sig = f"{slot.start}|{slot.end}"
                 if sig in legal_signatures:
                     validated_slots.append(slot.model_dump())
+                elif slot.start > preloaded_max:
+                    # Slot is beyond the 7-day window — collect its date for fetching
+                    out_of_range_dates.add(slot.start[:10])
                 else:
                     logger.warning("LLM hallucinated or modified a slot: %s", sig)
-            
+
+            # Fetch and validate any out-of-range slots the LLM suggested
+            if out_of_range_dates:
+                sorted_dates = sorted(out_of_range_dates)
+                start_date = sorted_dates[0]
+                end_date = (datetime.strptime(sorted_dates[-1], '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
+                logger.info("Fetching slots for LLM-suggested range: %s to %s", start_date, end_date)
+                fetched = CalendarService.get_available_slots(user_tz, start_date, end_date)
+                all_legal_slots = all_legal_slots + fetched
+
+                # Build a set of (start_dt, end_dt) for datetime-based comparison
+                # to avoid timezone offset mismatches (e.g. LLM says -08:00 but DST means -07:00)
+                fetched_dt = {
+                    (datetime.fromisoformat(s['start']), datetime.fromisoformat(s['end']))
+                    for s in fetched
+                }
+
+                for slot in parsed_result.slots:
+                    if slot.start[:10] in out_of_range_dates:
+                        llm_start = datetime.fromisoformat(slot.start)
+                        llm_end = datetime.fromisoformat(slot.end)
+                        if (llm_start, llm_end) in fetched_dt:
+                            validated_slots.append(slot.model_dump())
+                        else:
+                            # Find the closest matching slot by start time
+                            for fs, fe in fetched_dt:
+                                if fs.date() == llm_start.date() and fs.hour == llm_start.hour:
+                                    validated_slots.append({"start": fs.isoformat(), "end": fe.isoformat()})
+                                    break
+
             # If LLM failed completely, fallback to top legal slots
             if not validated_slots:
                 logger.warning("No valid slots returned by LLM. Falling back to raw legal slots.")
-                validated_slots = legal_slots[:5]
+                validated_slots = all_legal_slots[:5]
                 parsed_result.message += " (Note: I had trouble finding exact matches for your request, so here are the next available times.)"
 
             return {
                 "suggested_slots": validated_slots,
                 "ai_message": parsed_result.message,
                 "llm_input": prompt,
-                "llm_output": response_content
+                "llm_output": response_content,
+                "agent_steps": agent_steps
             }
         except Exception as e:
             logger.error("Failed to parse LLM response: %s", e)
             return {
-                "error": "Failed to parse LLM response", 
+                "error": "Failed to parse LLM response",
                 "details": str(e),
                 "llm_input": prompt,
-                "llm_output": response_content
+                "llm_output": response_content,
+                "agent_steps": agent_steps
             }

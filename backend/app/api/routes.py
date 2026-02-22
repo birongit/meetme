@@ -81,7 +81,7 @@ async def suggest_booking_ai(request: Request):
         legal_slots = CalendarService.get_available_slots(user_tz)
         
         # 2. Rank with AI
-        result = AIService.rank_slots(legal_slots, user_feedback)
+        result = AIService.rank_slots(legal_slots, user_feedback, user_tz=user_tz)
         
         if "error" in result:
              return JSONResponse(result, status_code=500)

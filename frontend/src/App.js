@@ -32,8 +32,10 @@ function App() {
     slots,
     loading,
     message,
+    hasFeedback,
     llmInput,
     llmOutput,
+    agentSteps,
     bookingStatus,
     timezone,
     fetchSlots,
@@ -102,13 +104,13 @@ function App() {
         </div>
       )}
       
-      {message && feedback && <div className="message">{message}</div>}
+      {message && hasFeedback && <div className="message">{message}</div>}
 
       {isDev && (
         <DebugPanel
           showDebug={showDebug} setShowDebug={setShowDebug}
           testMode={testMode} setTestMode={setTestMode}
-          llmInput={llmInput} llmOutput={llmOutput}
+          llmInput={llmInput} llmOutput={llmOutput} agentSteps={agentSteps}
         />
       )}
     </div>

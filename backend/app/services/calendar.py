@@ -92,38 +92,55 @@ class CalendarService:
         return busy
 
     @staticmethod
-    def get_available_slots(user_tz_str: str = None) -> List[Dict[str, str]]:
+    def get_available_slots(user_tz_str: str = None, start_date: str = None, end_date: str = None) -> List[Dict[str, str]]:
         """
-        Generates available 1-hour slots for the next 7 days.
+        Generates available 1-hour slots.
+        By default returns slots for the next 7 days.
+        If start_date/end_date are provided (YYYY-MM-DD), uses that range instead (max 14 days).
         """
         service = CalendarService.get_service()
-        
+
         # Determine timezone
         if not user_tz_str:
             cal_info = service.calendarList().get(calendarId='primary').execute()
             user_tz_str = cal_info.get('timeZone', 'UTC')
-        
+
         try:
             tz = ZoneInfo(user_tz_str)
         except Exception:
             tz = timezone.utc
 
         now = datetime.now(tz)
-        end_time = now + timedelta(days=7)
-        
+
+        # Determine date range
+        if start_date and end_date:
+            range_start = datetime.strptime(start_date, '%Y-%m-%d').replace(tzinfo=tz)
+            range_end = datetime.strptime(end_date, '%Y-%m-%d').replace(tzinfo=tz)
+            # Clamp past dates to now
+            if range_start < now:
+                range_start = now
+            # Enforce max 14-day range
+            if (range_end - range_start).days > 14:
+                range_end = range_start + timedelta(days=14)
+        else:
+            range_start = now
+            range_end = now + timedelta(days=7)
+
+        num_days = (range_end.date() - range_start.date()).days + 1
+
         # Fetch events
         events = CalendarService.get_events(
-            time_min=now.isoformat(),
-            time_max=end_time.isoformat()
+            time_min=range_start.isoformat(),
+            time_max=range_end.isoformat()
         )
-        
+
         busy = CalendarService.get_busy_ranges(events, tz)
         prefs = PreferencesService.get_preferences()
-        
+
         # Build allowed time ranges per day (default 7am-10pm)
         allowed_ranges = {}
-        for i in range(7):
-            day = (now + timedelta(days=i)).date()
+        for i in range(num_days):
+            day = (range_start + timedelta(days=i)).date()
             allowed_ranges[day] = [(time(7,0), time(22,0))]
 
         # Apply hard blocks from preferences to allowed_ranges
@@ -144,8 +161,8 @@ class CalendarService:
             rule_start = datetime.strptime(rule['start'], '%H:%M').time()
             rule_end = datetime.strptime(rule['end'], '%H:%M').time()
 
-            for i in range(7):
-                day = (now + timedelta(days=i))
+            for i in range(num_days):
+                day = (range_start + timedelta(days=i))
                 day_name = day.strftime('%A')
                 if day_name in rule['days']:
                     if rule_end <= rule_start:
@@ -162,8 +179,8 @@ class CalendarService:
                             allowed_ranges[day.date()], rule_start, rule_end)
 
         legal_slots = []
-        for i in range(7):
-            day = (now + timedelta(days=i)).date()
+        for i in range(num_days):
+            day = (range_start + timedelta(days=i)).date()
             if day not in allowed_ranges: 
                 continue
                 
