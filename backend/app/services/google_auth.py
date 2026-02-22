@@ -10,7 +10,8 @@ logger = logging.getLogger(__name__)
 
 SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
-    "https://www.googleapis.com/auth/calendar.events"
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/gmail.send"
 ]
 
 class GoogleAuthService:
@@ -44,10 +45,17 @@ class GoogleAuthService:
                 }
             }
         
+        # Resolve redirect URI: explicit param > env var > secrets.json
+        resolved_redirect = (
+            redirect_uri
+            or settings.GOOGLE_REDIRECT_URI
+            or client_config.get("web", {}).get("redirect_uris", [None])[0]
+        )
+
         return Flow.from_client_config(
             client_config,
             scopes=SCOPES,
-            redirect_uri=redirect_uri or settings.GOOGLE_REDIRECT_URI
+            redirect_uri=resolved_redirect
         )
 
     @staticmethod

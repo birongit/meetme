@@ -1,12 +1,17 @@
 import uuid
 import re
+import base64
+import logging
 from datetime import datetime, timedelta, time, timezone
+from email.mime.text import MIMEText
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Optional, Any, Tuple
 
 from googleapiclient.discovery import build
 from app.services.google_auth import GoogleAuthService
 from app.services.preferences import PreferencesService
+
+logger = logging.getLogger(__name__)
 
 class CalendarService:
     @staticmethod
@@ -226,10 +231,13 @@ class CalendarService:
         tz = start_dt.tzinfo or timezone.utc
         CalendarService.validate_slot(start_dt, end_dt, tz)
 
-        default_summary = 'Meeting with Birgit'
+        first = slot_data.get('first_name', '')
+        last = slot_data.get('last_name', '')
+        guest_name = f"{first}".strip()
+        summary = f"Birgit & {guest_name}" if guest_name else 'Meeting with Birgit'
 
         event = {
-            'summary': slot_data.get('summary') or default_summary,
+            'summary': slot_data.get('summary') or summary,
             'start': {'dateTime': slot_data['start']},
             'end': {'dateTime': slot_data['end']},
             'conferenceData': {
@@ -239,20 +247,47 @@ class CalendarService:
                         'type': 'hangoutsMeet'
                     }
                 }
-            }
+            },
+            'attendees': []
         }
-        
+
         if slot_data.get('email'):
             email = slot_data['email']
             if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
                  raise ValueError("Invalid email address provided.")
-            event['attendees'] = [{'email': email}]
+            event['attendees'].append({'email': email})
             
         created_event = service.events().insert(
-            calendarId='primary', 
-            body=event, 
+            calendarId='primary',
+            body=event,
             sendUpdates='all',
             conferenceDataVersion=1
         ).execute()
-        
+
+        # Send email notification to calendar owner
+        try:
+            owner_email = service.calendars().get(calendarId='primary').execute()['id']
+            guest_email = slot_data.get('email', 'not provided')
+            meet_link = created_event.get('hangoutLink', 'not available')
+            start_str = start_dt.strftime('%A, %B %d, %Y at %I:%M %p')
+
+            body_text = (
+                f"New meeting booked!\n\n"
+                f"Title: {event['summary']}\n"
+                f"When: {start_str}\n"
+                f"Guest: {guest_name} ({guest_email})\n"
+                f"Meet link: {meet_link}\n"
+            )
+
+            msg = MIMEText(body_text)
+            msg['To'] = owner_email
+            msg['Subject'] = f"New booking: {event['summary']}"
+            raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+
+            gmail = build('gmail', 'v1', credentials=GoogleAuthService.load_credentials())
+            gmail.users().messages().send(userId='me', body={'raw': raw}).execute()
+            logger.info("Booking notification email sent")
+        except Exception as e:
+            logger.error("Failed to send booking notification: %s", e)
+
         return created_event

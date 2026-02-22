@@ -12,11 +12,16 @@ A full-stack application for booking meetings, powered by AI.
 ### 1. Start the Backend
 
 ```bash
-cd backend
-# Install dependencies
-pip install -r ../requirements.txt
+# Set up virtual environment (one-time, from repo root)
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Activate venv (each session)
+source venv/bin/activate
+
 # Run server
-uvicorn app.main:app --reload
+cd backend && uvicorn app.main:app --reload
 ```
 
 The backend runs on `http://localhost:8000`.

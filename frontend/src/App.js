@@ -102,7 +102,7 @@ function App() {
         </div>
       )}
       
-      {message && <div className="message">{message}</div>}
+      {message && feedback && <div className="message">{message}</div>}
 
       {isDev && (
         <DebugPanel

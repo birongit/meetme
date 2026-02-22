@@ -8,7 +8,7 @@ AI-powered meeting booking application. Users see intelligently ranked available
 
 ## Tech Stack
 
-- **Backend**: Python 3.9.6, FastAPI, LangChain + Google Gemini, Google Calendar API, SQLAlchemy, Pydantic
+- **Backend**: Python 3.9.6, FastAPI, LangChain + Google Gemini, Google Calendar API, Pydantic
 - **Frontend**: React 19 (JavaScript, not TypeScript), Axios, Create React App
 
 ## Commands
@@ -16,8 +16,13 @@ AI-powered meeting booking application. Users see intelligently ranked available
 ### Backend
 
 ```bash
-# Install dependencies
+# Set up virtual environment (one-time)
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
+
+# Activate venv (each session)
+source venv/bin/activate
 
 # Run dev server (from repo root)
 cd backend && uvicorn app.main:app --reload
