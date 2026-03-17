@@ -14,6 +14,10 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.send"
 ]
 
+# Stores the flow between /authorize and /oauth2callback so the PKCE
+# code_verifier is preserved (Google requires it since 2025).
+_pending_flow = None
+
 class GoogleAuthService:
     @staticmethod
     def get_flow(redirect_uri: str = None):
@@ -60,8 +64,9 @@ class GoogleAuthService:
 
     @staticmethod
     def get_authorization_url():
-        flow = GoogleAuthService.get_flow()
-        authorization_url, state = flow.authorization_url(
+        global _pending_flow
+        _pending_flow = GoogleAuthService.get_flow()
+        authorization_url, state = _pending_flow.authorization_url(
             access_type='offline',
             prompt='consent',
             include_granted_scopes='true'
@@ -70,7 +75,9 @@ class GoogleAuthService:
 
     @staticmethod
     def fetch_token(code: str):
-        flow = GoogleAuthService.get_flow()
+        global _pending_flow
+        flow = _pending_flow or GoogleAuthService.get_flow()
+        _pending_flow = None
         flow.fetch_token(code=code)
         credentials = flow.credentials
         return credentials
