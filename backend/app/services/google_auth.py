@@ -62,7 +62,8 @@ class GoogleAuthService:
     def get_authorization_url():
         flow = GoogleAuthService.get_flow()
         authorization_url, state = flow.authorization_url(
-            access_type='offline', 
+            access_type='offline',
+            prompt='consent',
             include_granted_scopes='true'
         )
         return authorization_url
