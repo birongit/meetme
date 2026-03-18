@@ -42,7 +42,7 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: cd frontend && npm ci
+        run: cd frontend && npm install
 
       - name: Run tests with coverage
         run: cd frontend && npm test -- --watchAll=false --coverage
