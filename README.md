@@ -1,5 +1,9 @@
 # Booking Page Application
 
+[![CI](https://github.com/birongit/meetme/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/birongit/meetme/actions/workflows/ci.yml)
+[![backend coverage](https://codecov.io/gh/birongit/meetme/branch/main/graph/badge.svg?flag=backend)](https://app.codecov.io/gh/birongit/meetme?flags%5B0%5D=backend)
+[![frontend coverage](https://codecov.io/gh/birongit/meetme/branch/main/graph/badge.svg?flag=frontend)](https://app.codecov.io/gh/birongit/meetme?flags%5B0%5D=frontend)
+
 A full-stack application for booking meetings, powered by AI.
 
 ## Project Structure
