@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import List, Dict, Any
 from collections import defaultdict
@@ -154,7 +155,16 @@ class AIService:
             elif "```" in cleaned_response:
                 cleaned_response = cleaned_response.split("```")[1].split("```")[0].strip()
 
-            parsed_result = parser.parse(cleaned_response)
+            try:
+                parsed_result = parser.parse(cleaned_response)
+            except Exception:
+                # Some models prefix the JSON with prose; extract the first
+                # parseable JSON object from the response instead
+                json_start = cleaned_response.find('{')
+                if json_start == -1:
+                    raise
+                obj, _ = json.JSONDecoder().raw_decode(cleaned_response[json_start:])
+                parsed_result = SlotList(**obj)
 
             # Post-validation: Ensure returned slots are actually in the legal_slots list
             # Include any extra slots fetched by the agent tool
