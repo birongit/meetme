@@ -117,8 +117,10 @@ class AIService:
 
         llm = ChatGoogleGenerativeAI(
             google_api_key=settings.GOOGLE_AI_API_KEY,
-            model="gemini-2.0-flash",
+            model=settings.GEMINI_MODEL,
             temperature=0,
+            # Fail fast: default retry backoff (~62s) exceeds Heroku's 30s router timeout
+            max_retries=2,
         )
 
         tools = [get_days_of_week, fetch_available_slots]

@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     
     # Google AI (Gemini)
     GOOGLE_AI_API_KEY: Optional[str] = None
+    GEMINI_MODEL: str = "gemini-2.5-flash-lite"
 
     # Heroku (for persisting tokens)
     HEROKU_API_KEY: Optional[str] = None
