@@ -21,6 +21,10 @@ def get_langfuse_handler():
     """Returns a Langfuse callback handler, or None if credentials aren't configured."""
     if not (os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")):
         return None
+    # SDK 3.x only reads LANGFUSE_HOST and silently falls back to the EU
+    # endpoint; accept the LANGFUSE_BASE_URL name from newer docs too
+    if os.environ.get("LANGFUSE_BASE_URL") and not os.environ.get("LANGFUSE_HOST"):
+        os.environ["LANGFUSE_HOST"] = os.environ["LANGFUSE_BASE_URL"]
     try:
         from langfuse.langchain import CallbackHandler
         return CallbackHandler()
