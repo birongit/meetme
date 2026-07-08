@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from typing import List, Dict, Any
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -15,6 +16,17 @@ from app.services.preferences import PreferencesService
 from app.services.calendar import CalendarService
 
 logger = logging.getLogger(__name__)
+
+def get_langfuse_handler():
+    """Returns a Langfuse callback handler, or None if credentials aren't configured."""
+    if not (os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")):
+        return None
+    try:
+        from langfuse.langchain import CallbackHandler
+        return CallbackHandler()
+    except Exception as e:
+        logger.warning("Langfuse tracing disabled: %s", e)
+        return None
 
 @tool
 def get_days_of_week(date_strings: List[str]) -> Dict[str, str]:
@@ -135,7 +147,20 @@ class AIService:
         agent = create_tool_calling_agent(llm, tools, prompt_template)
         agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, return_intermediate_steps=True)
 
-        result = agent_executor.invoke({"input": prompt})
+        invoke_config = {
+            "run_name": "rank-slots",
+            "metadata": {
+                "langfuse_tags": [
+                    "feedback-round" if user_feedback else "initial-round",
+                    f"model:{settings.GEMINI_MODEL}",
+                ],
+            },
+        }
+        langfuse_handler = get_langfuse_handler()
+        if langfuse_handler:
+            invoke_config["callbacks"] = [langfuse_handler]
+
+        result = agent_executor.invoke({"input": prompt}, config=invoke_config)
         response_content = result["output"]
         intermediate_steps = result.get("intermediate_steps", [])
 

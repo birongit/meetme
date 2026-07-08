@@ -152,7 +152,7 @@ def test_fetch_available_slots_called_during_agent_run():
         captured["tools"] = tools
         return MagicMock()
 
-    def fake_executor_invoke(input):
+    def fake_executor_invoke(input, config=None):
         # Simulate LLM calling fetch_available_slots
         fetch_tool = next(t for t in captured["tools"] if t.name == "fetch_available_slots")
         fetch_tool.invoke({"start_date": "2026-04-01", "end_date": "2026-04-07"})
