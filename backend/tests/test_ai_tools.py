@@ -183,3 +183,65 @@ def test_fetch_available_slots_called_during_agent_run():
     # The slot from the tool made it through validation
     assert result["suggested_slots"] == [{"start": "2026-04-01T09:00:00+00:00", "end": "2026-04-01T10:00:00+00:00"}]
     assert result["ai_message"] == "Here is a slot in April."
+
+
+# ── Resilience: retry on empty output, fallback on unusable output ───────────
+
+def _run_rank_slots_with_outputs(outputs):
+    """
+    Run rank_slots with a mocked executor whose successive invoke() calls
+    return the given output strings. Returns (result, temps, invoke_count).
+    """
+    llm_temps = []
+
+    def fake_llm(**kwargs):
+        llm_temps.append(kwargs.get("temperature"))
+        return MagicMock()
+
+    responses = [{"output": o, "intermediate_steps": []} for o in outputs]
+    mock_executor = MagicMock()
+    mock_executor.invoke.side_effect = responses
+
+    with patch("app.services.ai_service.create_tool_calling_agent", return_value=MagicMock()), \
+         patch("app.services.ai_service.AgentExecutor", return_value=mock_executor), \
+         patch("app.services.ai_service.ChatGoogleGenerativeAI", side_effect=fake_llm), \
+         patch("app.services.ai_service.PreferencesService.get_preferences", return_value={"no_meetings": []}):
+        result = AIService.rank_slots(FAKE_SLOTS, user_tz="UTC")
+
+    return result, llm_temps, mock_executor.invoke.call_count
+
+
+def test_empty_output_retries_with_temperature():
+    """Empty LLM output triggers one retry with temperature > 0."""
+    import json
+    good = json.dumps({"slots": FAKE_SLOTS[:1], "message": "Retry worked."})
+    result, temps, calls = _run_rank_slots_with_outputs(["", good])
+
+    assert calls == 2
+    assert temps == [0, 0.7]
+    assert result["suggested_slots"] == FAKE_SLOTS[:1]
+    assert "llm_fallback" not in result
+
+
+def test_unusable_output_after_retry_falls_back_to_random_sample():
+    """If output stays unusable after the retry, serve sampled legal slots instead of an error."""
+    result, temps, calls = _run_rank_slots_with_outputs(["", ""])
+
+    assert calls == 2
+    assert "error" not in result
+    assert result["llm_fallback"]
+    # Sampled slots must all be legal ones
+    assert all(s in FAKE_SLOTS for s in result["suggested_slots"])
+    assert len(result["suggested_slots"]) == len(FAKE_SLOTS)  # min(7, available)
+    assert result["ai_message"]
+
+
+def test_prose_only_output_falls_back_without_error():
+    """Prose with no JSON at all (July 8 failure mode) degrades gracefully."""
+    prose = "Here are some great slots:\n* Monday 9am\n* Tuesday 2pm\nLet me know!"
+    result, temps, calls = _run_rank_slots_with_outputs([prose])
+
+    assert calls == 1  # non-empty, so no retry
+    assert "error" not in result
+    assert result["llm_fallback"]
+    assert all(s in FAKE_SLOTS for s in result["suggested_slots"])

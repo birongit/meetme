@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import random
 from typing import List, Dict, Any
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -132,14 +133,6 @@ class AIService:
                 f"{json_hint}"
             )
 
-        llm = ChatGoogleGenerativeAI(
-            google_api_key=settings.GOOGLE_AI_API_KEY,
-            model=settings.GEMINI_MODEL,
-            temperature=0,
-            # Fail fast: default retry backoff (~62s) exceeds Heroku's 30s router timeout
-            max_retries=2,
-        )
-
         tools = [get_days_of_week, fetch_available_slots]
 
         prompt_template = ChatPromptTemplate.from_messages([
@@ -148,23 +141,38 @@ class AIService:
             ("placeholder", "{agent_scratchpad}"),
         ])
 
-        agent = create_tool_calling_agent(llm, tools, prompt_template)
-        agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, return_intermediate_steps=True)
+        def run_agent(temperature: float, extra_tags: List[str]):
+            llm = ChatGoogleGenerativeAI(
+                google_api_key=settings.GOOGLE_AI_API_KEY,
+                model=settings.GEMINI_MODEL,
+                temperature=temperature,
+                # Fail fast: default retry backoff (~62s) exceeds Heroku's 30s router timeout
+                max_retries=2,
+            )
+            agent = create_tool_calling_agent(llm, tools, prompt_template)
+            agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, return_intermediate_steps=True)
+            invoke_config = {
+                "run_name": "rank-slots",
+                "metadata": {
+                    "langfuse_tags": [
+                        "feedback-round" if user_feedback else "initial-round",
+                        f"model:{settings.GEMINI_MODEL}",
+                    ] + extra_tags,
+                },
+            }
+            langfuse_handler = get_langfuse_handler()
+            if langfuse_handler:
+                invoke_config["callbacks"] = [langfuse_handler]
+            return agent_executor.invoke({"input": prompt}, config=invoke_config)
 
-        invoke_config = {
-            "run_name": "rank-slots",
-            "metadata": {
-                "langfuse_tags": [
-                    "feedback-round" if user_feedback else "initial-round",
-                    f"model:{settings.GEMINI_MODEL}",
-                ],
-            },
-        }
-        langfuse_handler = get_langfuse_handler()
-        if langfuse_handler:
-            invoke_config["callbacks"] = [langfuse_handler]
+        result = run_agent(temperature=0, extra_tags=[])
+        if not str(result.get("output", "")).strip():
+            # Known gemini-2.5-flash-lite regression: empty completion after a
+            # tool result. Retry with temperature to escape the deterministic
+            # failure for this exact input.
+            logger.warning("LLM returned empty output; retrying with temperature=0.7")
+            result = run_agent(temperature=0.7, extra_tags=["retry-empty-output"])
 
-        result = agent_executor.invoke({"input": prompt}, config=invoke_config)
         response_content = result["output"]
         intermediate_steps = result.get("intermediate_steps", [])
 
@@ -258,11 +266,22 @@ class AIService:
                 "agent_steps": agent_steps
             }
         except Exception as e:
-            logger.error("Failed to parse LLM response: %s", e)
+            # The LLM is a ranking enhancement, not a dependency: if its output
+            # is unusable even after the retry, serve a random sample of legal
+            # slots so the visitor can still book. Marked llm_fallback for
+            # log/trace searching — the user sees a normal response.
+            logger.error(
+                "LLM_FALLBACK: unusable LLM output after retry (%s); serving random slot sample. Raw output: %r",
+                e, str(response_content)[:500],
+            )
+            all_legal_slots = legal_slots + extra_fetched_slots
+            sample = random.sample(all_legal_slots, min(7, len(all_legal_slots)))
+            sample.sort(key=lambda s: s['start'])
             return {
-                "error": "Failed to parse LLM response",
-                "details": str(e),
+                "suggested_slots": sample,
+                "ai_message": "Here are some available times — pick whichever works best for you!",
                 "llm_input": prompt,
                 "llm_output": response_content,
-                "agent_steps": agent_steps
+                "agent_steps": agent_steps,
+                "llm_fallback": str(e),
             }
