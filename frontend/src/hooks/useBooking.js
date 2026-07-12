@@ -11,6 +11,10 @@ export const useBooking = () => {
   const [agentSteps, setAgentSteps] = useState([]);
   const [bookingStatus, setBookingStatus] = useState({});
   const [timezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+  // Groups all suggest requests from this visit into one Langfuse session
+  const [sessionId] = useState(() =>
+    (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : `s-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
 
   const fetchSlots = async (feedback, testMode) => {
     setLoading(true);
@@ -21,7 +25,7 @@ export const useBooking = () => {
     setAgentSteps([]);
     
     try {
-      const data = await api.suggestSlots(timezone, feedback, testMode);
+      const data = await api.suggestSlots(timezone, feedback, testMode, sessionId);
       
       if (data.llm_input) setLlmInput(data.llm_input);
       if (data.llm_output) setLlmOutput(data.llm_output);

@@ -67,6 +67,7 @@ async def suggest_booking_ai(request: Request):
         user_tz = body.get("timezone")
         user_feedback = body.get("user_feedback")
         test_mode = body.get("test_mode")
+        session_id = body.get("session_id")
 
         if test_mode:
              return {
@@ -81,7 +82,7 @@ async def suggest_booking_ai(request: Request):
         legal_slots = CalendarService.get_available_slots(user_tz)
         
         # 2. Rank with AI
-        result = AIService.rank_slots(legal_slots, user_feedback, user_tz=user_tz)
+        result = AIService.rank_slots(legal_slots, user_feedback, user_tz=user_tz, session_id=session_id)
         
         if "error" in result:
              return JSONResponse(result, status_code=500)

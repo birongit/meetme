@@ -89,9 +89,9 @@ def test_suggest_booking_ai_passes_timezone():
     with patch("app.api.routes.CalendarService.get_available_slots", return_value=mock_slots) as mock_cal, \
          patch("app.api.routes.AIService.rank_slots", return_value=mock_ai_result) as mock_rank:
 
-        payload = {"timezone": "America/New_York", "user_feedback": "afternoon please"}
+        payload = {"timezone": "America/New_York", "user_feedback": "afternoon please", "session_id": "sess-123"}
         response = client.post("/booking/suggest-ai", json=payload)
 
         assert response.status_code == 200
-        # Verify rank_slots was called with user_tz keyword argument
-        mock_rank.assert_called_once_with(mock_slots, "afternoon please", user_tz="America/New_York")
+        # Verify rank_slots was called with user_tz and session_id forwarded
+        mock_rank.assert_called_once_with(mock_slots, "afternoon please", user_tz="America/New_York", session_id="sess-123")

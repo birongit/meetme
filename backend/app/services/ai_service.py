@@ -18,20 +18,39 @@ from app.services.calendar import CalendarService
 
 logger = logging.getLogger(__name__)
 
+def _langfuse_enabled() -> bool:
+    return bool(os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY"))
+
+# SDK 3.x only reads LANGFUSE_HOST and silently falls back to the EU
+# endpoint; accept the LANGFUSE_BASE_URL name from newer docs too
+if os.environ.get("LANGFUSE_BASE_URL") and not os.environ.get("LANGFUSE_HOST"):
+    os.environ["LANGFUSE_HOST"] = os.environ["LANGFUSE_BASE_URL"]
+
+if _langfuse_enabled():
+    from langfuse import observe, get_client
+    from langfuse.langchain import CallbackHandler
+else:
+    # No-op stand-ins so the module works without Langfuse credentials
+    def observe(**okwargs):
+        def deco(fn):
+            return fn
+        return deco
+    get_client = None
+    CallbackHandler = None
+
 def get_langfuse_handler():
     """Returns a Langfuse callback handler, or None if credentials aren't configured."""
-    if not (os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")):
+    if CallbackHandler is None:
         return None
-    # SDK 3.x only reads LANGFUSE_HOST and silently falls back to the EU
-    # endpoint; accept the LANGFUSE_BASE_URL name from newer docs too
-    if os.environ.get("LANGFUSE_BASE_URL") and not os.environ.get("LANGFUSE_HOST"):
-        os.environ["LANGFUSE_HOST"] = os.environ["LANGFUSE_BASE_URL"]
     try:
-        from langfuse.langchain import CallbackHandler
         return CallbackHandler()
     except Exception as e:
         logger.warning("Langfuse tracing disabled: %s", e)
         return None
+
+def _lf():
+    """Returns the Langfuse client, or None if disabled."""
+    return get_client() if get_client else None
 
 @tool
 def get_days_of_week(date_strings: List[str]) -> Dict[str, str]:
@@ -51,10 +70,28 @@ def get_days_of_week(date_strings: List[str]) -> Dict[str, str]:
 
 class AIService:
     @staticmethod
-    def rank_slots(legal_slots: List[Dict[str, str]], user_feedback: str = None, user_tz: str = None) -> Dict[str, Any]:
+    @observe(name="rank-slots", capture_input=False, capture_output=False)
+    def rank_slots(legal_slots: List[Dict[str, str]], user_feedback: str = None, user_tz: str = None, session_id: str = None) -> Dict[str, Any]:
         """
         Uses LLM to rank and select the best slots based on user feedback and preferences.
         """
+        base_tags = [
+            "feedback-round" if user_feedback else "initial-round",
+            f"model:{settings.GEMINI_MODEL}",
+        ]
+        lf = _lf()
+        if lf:
+            # capture_input=False above: the raw args include the full slot
+            # list; set a readable trace input explicitly instead
+            lf.update_current_trace(
+                session_id=session_id,
+                tags=base_tags,
+                input={
+                    "user_feedback": user_feedback,
+                    "user_tz": user_tz,
+                    "num_legal_slots": len(legal_slots),
+                },
+            )
         # Collect any extra slots fetched by the agent tool
         extra_fetched_slots: List[Dict[str, str]] = []
 
@@ -141,7 +178,7 @@ class AIService:
             ("placeholder", "{agent_scratchpad}"),
         ])
 
-        def run_agent(temperature: float, extra_tags: List[str]):
+        def run_agent(temperature: float, attempt: int):
             llm = ChatGoogleGenerativeAI(
                 google_api_key=settings.GOOGLE_AI_API_KEY,
                 model=settings.GEMINI_MODEL,
@@ -151,27 +188,21 @@ class AIService:
             )
             agent = create_tool_calling_agent(llm, tools, prompt_template)
             agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, return_intermediate_steps=True)
-            invoke_config = {
-                "run_name": "rank-slots",
-                "metadata": {
-                    "langfuse_tags": [
-                        "feedback-round" if user_feedback else "initial-round",
-                        f"model:{settings.GEMINI_MODEL}",
-                    ] + extra_tags,
-                },
-            }
+            invoke_config = {"run_name": f"agent-attempt-{attempt}"}
             langfuse_handler = get_langfuse_handler()
             if langfuse_handler:
                 invoke_config["callbacks"] = [langfuse_handler]
             return agent_executor.invoke({"input": prompt}, config=invoke_config)
 
-        result = run_agent(temperature=0, extra_tags=[])
+        result = run_agent(temperature=0, attempt=1)
         if not str(result.get("output", "")).strip():
             # Known gemini-2.5-flash-lite regression: empty completion after a
             # tool result. Retry with temperature to escape the deterministic
             # failure for this exact input.
             logger.warning("LLM returned empty output; retrying with temperature=0.7")
-            result = run_agent(temperature=0.7, extra_tags=["retry-empty-output"])
+            if lf:
+                lf.update_current_trace(tags=base_tags + ["retry-empty-output"])
+            result = run_agent(temperature=0.7, attempt=2)
 
         response_content = result["output"]
         intermediate_steps = result.get("intermediate_steps", [])
@@ -258,6 +289,9 @@ class AIService:
                 validated_slots = all_legal_slots[:5]
                 parsed_result.message += " (Note: I had trouble finding exact matches for your request, so here are the next available times.)"
 
+            if lf:
+                lf.score_current_trace(name="llm_success", value=1, data_type="BOOLEAN")
+                lf.update_current_trace(output={"num_slots": len(validated_slots), "fallback": False})
             return {
                 "suggested_slots": validated_slots,
                 "ai_message": parsed_result.message,
@@ -274,6 +308,12 @@ class AIService:
                 "LLM_FALLBACK: unusable LLM output after retry (%s); serving random slot sample. Raw output: %r",
                 e, str(response_content)[:500],
             )
+            if lf:
+                reason = "empty_output" if not str(response_content).strip() else "unparseable_output"
+                comment = f"{e}; raw output: {str(response_content)[:300]!r}"
+                lf.score_current_trace(name="llm_success", value=0, data_type="BOOLEAN", comment=comment)
+                lf.score_current_trace(name="llm_failure_reason", value=reason, data_type="CATEGORICAL", comment=comment)
+                lf.update_current_trace(output={"num_slots": None, "fallback": True, "reason": reason})
             all_legal_slots = legal_slots + extra_fetched_slots
             sample = random.sample(all_legal_slots, min(7, len(all_legal_slots)))
             sample.sort(key=lambda s: s['start'])

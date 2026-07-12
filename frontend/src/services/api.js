@@ -3,11 +3,12 @@ import axios from 'axios';
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 export const api = {
-  suggestSlots: async (timezone, feedback, testMode) => {
+  suggestSlots: async (timezone, feedback, testMode, sessionId) => {
     const response = await axios.post(`${API_URL}/booking/suggest-ai`, {
       timezone,
       user_feedback: feedback,
-      test_mode: testMode
+      test_mode: testMode,
+      session_id: sessionId
     });
     return response.data;
   },
