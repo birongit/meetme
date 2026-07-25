@@ -199,7 +199,10 @@ class AIService:
             # Known gemini-2.5-flash-lite regression: empty completion after a
             # tool result. Retry with temperature to escape the deterministic
             # failure for this exact input.
-            logger.warning("LLM returned empty output; retrying with temperature=0.7")
+            logger.warning(
+                "LLM returned empty output; retrying with temperature=0.7 trace=%s",
+                lf.get_trace_url() if lf else "n/a",
+            )
             if lf:
                 lf.update_current_trace(tags=base_tags + ["retry-empty-output"])
             result = run_agent(temperature=0.7, attempt=2)
@@ -305,8 +308,11 @@ class AIService:
             # slots so the visitor can still book. Marked llm_fallback for
             # log/trace searching — the user sees a normal response.
             logger.error(
-                "LLM_FALLBACK: unusable LLM output after retry (%s); serving random slot sample. Raw output: %r",
-                e, str(response_content)[:500],
+                "LLM_FALLBACK: unusable LLM output after retry (%s); serving random slot sample. trace=%s session=%s Raw output: %r",
+                e,
+                lf.get_trace_url() if lf else "n/a",
+                session_id or "n/a",
+                str(response_content)[:500],
             )
             if lf:
                 reason = "empty_output" if not str(response_content).strip() else "unparseable_output"
