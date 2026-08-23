@@ -20,6 +20,8 @@ Goal: evolve this prototype into a production-grade showcase of modern AI engine
 
 ### Known issues
 
+- **Retry gap**: the temperature-bumped retry only fires on *empty* LLM output. Non-empty-but-unusable output (prose instead of JSON, clarifying questions) goes straight to the fallback without a second attempt. Deliberate for now; fixing it moves parse-output inside the attempt loop (retry condition becomes "didn't parse"). Revisit with the eval harness.
+
 - **Feedback flow parse failure** (July 2026): submitting feedback triggers the round-2 agent path (`ai_service.py`), which sometimes returns unparseable output with `gemini-2.5-flash-lite`. Deliberately deferred — this is the first test case for the eval harness (phase 3), not a one-off patch.
 - Python 3.9 is past EOL; Google client libraries emit deprecation warnings. Bump CI + venv to 3.12 (no code changes required).
 - `react-scripts` (Create React App) is deprecated and unmaintained; frontend build tooling should eventually move to Vite (folded into phase 6).
