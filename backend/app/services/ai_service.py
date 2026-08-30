@@ -53,6 +53,12 @@ def _lf():
     """Returns the Langfuse client, or None if disabled."""
     return get_client() if get_client else None
 
+def _debug_fields(prompt: str, output: str) -> Dict[str, str]:
+    """LLM internals for the dev DebugPanel; omitted from production responses."""
+    if os.environ.get("LANGFUSE_TRACING_ENVIRONMENT") == "production":
+        return {}
+    return {"llm_input": prompt, "llm_output": output}
+
 @contextmanager
 def _step(name: str, as_type: str = "span", **kwargs):
     """Opens a pipeline-step observation, or a no-op if Langfuse is disabled.
@@ -143,6 +149,8 @@ class AIService:
                     legal_slots_subset.extend(by_day[day][:per_day])
 
             if not legal_slots_subset:
+                if lf:
+                    lf.update_current_trace(output={"num_slots": 0, "fallback": False, "reason": "no_legal_slots"})
                 return {"error": "No legal slots available."}
 
             prefs = PreferencesService.get_preferences()
@@ -227,60 +235,106 @@ class AIService:
                                         status_message="empty LLM output")
                 return result
 
-        result = run_agent(temperature=0, attempt=1)
-        if not str(result.get("output", "")).strip():
-            # Known gemini-2.5-flash-lite regression: empty completion after a
-            # tool result. Retry with temperature to escape the deterministic
-            # failure for this exact input.
-            logger.warning(
-                "LLM returned empty output; retrying with temperature=0.7 trace=%s",
-                lf.get_trace_url() if lf else "n/a",
-            )
-            if lf:
-                lf.update_current_trace(tags=base_tags + ["retry-empty-output"])
-            result = run_agent(temperature=0.7, attempt=2)
-
-        response_content = result["output"]
-        intermediate_steps = result.get("intermediate_steps", [])
-
-        # Log intermediate steps for debugging
         agent_steps = []
-        for step in intermediate_steps:
-            action, observation = step
-            step_info = {"tool": action.tool, "input": action.tool_input, "output": str(observation)}
-            agent_steps.append(step_info)
-            logger.info("Agent tool call: %s(%s) -> %s", action.tool, action.tool_input, str(observation)[:200])
+        response_content = ""
+        parsed_result = None
+        last_error = None
+        phase = "llm_call"
+
+        def serve_fallback(reason: str, error_detail: str):
+            """Degraded-but-working response: the visitor always gets bookable slots."""
+            logger.error(
+                "LLM_FALLBACK: %s (%s); serving random slot sample. trace=%s session=%s Raw output: %r",
+                reason, error_detail[:300],
+                lf.get_trace_url() if lf else "n/a",
+                session_id or "n/a",
+                str(response_content)[:1000],
+            )
+            all_slots = legal_slots + extra_fetched_slots
+            sample = random.sample(all_slots, min(7, len(all_slots)))
+            sample.sort(key=lambda s: s['start'])
+            if lf:
+                comment = f"{error_detail[:500]}; raw output: {str(response_content)[:500]!r}"
+                lf.create_event(
+                    name="fallback",
+                    level="WARNING",
+                    status_message=f"served {len(sample)} random slots ({reason})",
+                    output={"num_slots": len(sample), "reason": reason, "error": error_detail[:1000]},
+                )
+                lf.score_current_trace(name="llm_success", value=0, data_type="BOOLEAN", comment=comment)
+                lf.score_current_trace(name="llm_failure_reason", value=reason, data_type="CATEGORICAL", comment=comment)
+                lf.update_current_trace(output={"num_slots": len(sample), "fallback": True, "reason": reason, "error": error_detail[:500]})
+            return {
+                "suggested_slots": sample,
+                "ai_message": "Here are some available times — pick whichever works best for you!",
+                "agent_steps": agent_steps,
+                "llm_fallback": reason,
+                **_debug_fields(prompt, response_content),
+            }
 
         try:
-            with _step("parse-output", input={"raw_output": str(response_content)[:300]}) as parse_span:
-                try:
-                    # Clean up response content
-                    cleaned_response = response_content.strip()
-                    if "```json" in cleaned_response:
-                        cleaned_response = cleaned_response.split("```json")[1].split("```")[0].strip()
-                    elif "```" in cleaned_response:
-                        cleaned_response = cleaned_response.split("```")[1].split("```")[0].strip()
+            for attempt, temperature in ((1, 0), (2, 0.7)):
+                phase = "llm_call"
+                result = run_agent(temperature=temperature, attempt=attempt)
+                response_content = str(result.get("output", ""))
 
+                agent_steps = []
+                for step in result.get("intermediate_steps", []):
+                    action, observation = step
+                    agent_steps.append({"tool": action.tool, "input": action.tool_input, "output": str(observation)})
+                    logger.info("Agent tool call: %s(%s) -> %s", action.tool, action.tool_input, str(observation)[:200])
+
+                phase = "parse"
+                with _step("parse-output", input={"attempt": attempt, "raw_output": str(response_content)[:1000]}) as parse_span:
                     try:
-                        parsed_result = parser.parse(cleaned_response)
-                    except Exception:
-                        # Some models prefix the JSON with prose; extract the first
-                        # parseable JSON object from the response instead
-                        json_start = cleaned_response.find('{')
-                        if json_start == -1:
-                            raise
-                        obj, _ = json.JSONDecoder().raw_decode(cleaned_response[json_start:])
-                        parsed_result = SlotList(**obj)
-                except Exception as pe:
-                    if parse_span:
-                        parse_span.update(level="ERROR", status_message=f"unparseable: {str(pe)[:150]}")
-                    raise
-                if parse_span:
-                    parse_span.update(output={
-                        "num_slots": len(parsed_result.slots),
-                        "message": (parsed_result.message or "")[:150],
-                    })
+                        # Clean up response content
+                        cleaned_response = response_content.strip()
+                        if "```json" in cleaned_response:
+                            cleaned_response = cleaned_response.split("```json")[1].split("```")[0].strip()
+                        elif "```" in cleaned_response:
+                            cleaned_response = cleaned_response.split("```")[1].split("```")[0].strip()
 
+                        try:
+                            parsed_result = parser.parse(cleaned_response)
+                        except Exception:
+                            # Some models prefix the JSON with prose; extract the first
+                            # parseable JSON object from the response instead
+                            json_start = cleaned_response.find('{')
+                            if json_start == -1:
+                                raise
+                            obj, _ = json.JSONDecoder().raw_decode(cleaned_response[json_start:])
+                            parsed_result = SlotList(**obj)
+                        if parse_span:
+                            parse_span.update(output={
+                                "parsed": True,
+                                "num_slots": len(parsed_result.slots),
+                                "message": (parsed_result.message or "")[:300],
+                            })
+                    except Exception as pe:
+                        last_error = pe
+                        if parse_span:
+                            parse_span.update(
+                                level="ERROR",
+                                status_message=f"unparseable: {str(pe)[:300]}",
+                                output={"parsed": False, "error": str(pe)[:1000]},
+                            )
+
+                if parsed_result is not None:
+                    break
+                if attempt == 1:
+                    failure = "empty" if not response_content.strip() else "unparseable"
+                    logger.warning(
+                        "LLM output %s on attempt 1; retrying with temperature=0.7 trace=%s",
+                        failure, lf.get_trace_url() if lf else "n/a",
+                    )
+                    if lf:
+                        lf.update_current_trace(tags=base_tags + ["retry-attempted"])
+
+            if parsed_result is None:
+                reason = "empty_output" if not str(response_content).strip() else "unparseable_output"
+                return serve_fallback(reason, str(last_error))
+
+            phase = "validate"
             # Post-validation: Ensure returned slots are actually in the legal_slots list
             # Include any extra slots fetched by the agent tool
             all_legal_slots = legal_slots + extra_fetched_slots
@@ -289,6 +343,7 @@ class AIService:
             # Determine the boundary of pre-loaded slots
             preloaded_max = max(s['start'] for s in legal_slots) if legal_slots else ""
 
+            soft_fallback = False
             with _step("validate-slots", as_type="evaluator",
                        input={"num_proposed": len(parsed_result.slots)}) as val_span:
                 validated_slots = []
@@ -334,66 +389,51 @@ class AIService:
                                         validated_slots.append({"start": fs.isoformat(), "end": fe.isoformat()})
                                         break
 
-                # If LLM failed completely, fallback to top legal slots
+                # LLM proposed only invalid slots: serve top legal slots instead
                 if not validated_slots:
-                    logger.warning("No valid slots returned by LLM. Falling back to raw legal slots.")
+                    soft_fallback = True
+                    logger.warning(
+                        "All LLM-proposed slots invalid; serving top legal slots. trace=%s",
+                        lf.get_trace_url() if lf else "n/a",
+                    )
                     validated_slots = all_legal_slots[:5]
                     parsed_result.message += " (Note: I had trouble finding exact matches for your request, so here are the next available times.)"
 
                 if val_span:
+                    problems = []
+                    if hallucinated:
+                        problems.append(f"{hallucinated} hallucinated slot(s) dropped")
+                    if soft_fallback:
+                        problems.append("all proposed slots invalid")
                     val_span.update(
                         output={
                             "num_proposed": len(parsed_result.slots),
-                            "num_valid": len(validated_slots),
+                            "num_valid": 0 if soft_fallback else len(validated_slots),
                             "num_hallucinated": hallucinated,
                             "out_of_range_fetch": bool(out_of_range_dates),
                         },
-                        level="WARNING" if hallucinated else "DEFAULT",
-                        status_message=f"{hallucinated} hallucinated slot(s) dropped" if hallucinated else None,
+                        level="WARNING" if problems else "DEFAULT",
+                        status_message="; ".join(problems) if problems else None,
                     )
 
             if lf:
-                lf.score_current_trace(name="llm_success", value=1, data_type="BOOLEAN")
-                lf.update_current_trace(output={"num_slots": len(validated_slots), "fallback": False})
+                if soft_fallback:
+                    comment = f"{len(parsed_result.slots)} proposed, 0 valid"
+                    lf.score_current_trace(name="llm_success", value=0, data_type="BOOLEAN", comment=comment)
+                    lf.score_current_trace(name="llm_failure_reason", value="all_slots_invalid", data_type="CATEGORICAL", comment=comment)
+                    lf.update_current_trace(output={"num_slots": len(validated_slots), "fallback": "soft", "reason": "all_slots_invalid"})
+                else:
+                    lf.score_current_trace(name="llm_success", value=1, data_type="BOOLEAN")
+                    lf.update_current_trace(output={"num_slots": len(validated_slots), "fallback": False})
             return {
                 "suggested_slots": validated_slots,
                 "ai_message": parsed_result.message,
-                "llm_input": prompt,
-                "llm_output": response_content,
-                "agent_steps": agent_steps
+                "agent_steps": agent_steps,
+                **_debug_fields(prompt, response_content),
             }
         except Exception as e:
-            # The LLM is a ranking enhancement, not a dependency: if its output
-            # is unusable even after the retry, serve a random sample of legal
-            # slots so the visitor can still book. Marked llm_fallback for
-            # log/trace searching — the user sees a normal response.
-            logger.error(
-                "LLM_FALLBACK: unusable LLM output after retry (%s); serving random slot sample. trace=%s session=%s Raw output: %r",
-                e,
-                lf.get_trace_url() if lf else "n/a",
-                session_id or "n/a",
-                str(response_content)[:500],
-            )
-            all_legal_slots = legal_slots + extra_fetched_slots
-            sample = random.sample(all_legal_slots, min(7, len(all_legal_slots)))
-            sample.sort(key=lambda s: s['start'])
-            if lf:
-                reason = "empty_output" if not str(response_content).strip() else "unparseable_output"
-                comment = f"{e}; raw output: {str(response_content)[:300]!r}"
-                lf.create_event(
-                    name="fallback",
-                    level="WARNING",
-                    status_message=f"served {len(sample)} random slots ({reason})",
-                    output={"num_slots": len(sample), "reason": reason},
-                )
-                lf.score_current_trace(name="llm_success", value=0, data_type="BOOLEAN", comment=comment)
-                lf.score_current_trace(name="llm_failure_reason", value=reason, data_type="CATEGORICAL", comment=comment)
-                lf.update_current_trace(output={"num_slots": len(sample), "fallback": True, "reason": reason})
-            return {
-                "suggested_slots": sample,
-                "ai_message": "Here are some available times — pick whichever works best for you!",
-                "llm_input": prompt,
-                "llm_output": response_content,
-                "agent_steps": agent_steps,
-                "llm_fallback": str(e),
-            }
+            # The LLM is a ranking enhancement, not a dependency: whatever
+            # fails — the model API itself, or anything unexpected — the
+            # visitor still gets bookable slots, and the outcome is scored.
+            reason = "llm_api_error" if phase == "llm_call" else f"unexpected_error:{type(e).__name__}"
+            return serve_fallback(reason, str(e))

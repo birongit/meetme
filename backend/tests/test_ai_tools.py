@@ -236,12 +236,44 @@ def test_unusable_output_after_retry_falls_back_to_random_sample():
     assert result["ai_message"]
 
 
-def test_prose_only_output_falls_back_without_error():
-    """Prose with no JSON at all (July 8 failure mode) degrades gracefully."""
+def test_prose_only_output_retries_then_falls_back():
+    """Prose with no JSON (July 8 / Aug 30 failure mode) now retries, then degrades gracefully."""
     prose = "Here are some great slots:\n* Monday 9am\n* Tuesday 2pm\nLet me know!"
-    result, temps, calls = _run_rank_slots_with_outputs([prose])
+    result, temps, calls = _run_rank_slots_with_outputs([prose, prose])
 
-    assert calls == 1  # non-empty, so no retry
+    assert calls == 2  # unparseable output triggers the retry too
+    assert temps == [0, 0.7]
     assert "error" not in result
-    assert result["llm_fallback"]
+    assert result["llm_fallback"] == "unparseable_output"
     assert all(s in FAKE_SLOTS for s in result["suggested_slots"])
+
+
+def test_agent_exception_falls_back_with_api_error_reason():
+    """An exception from the agent (model API down) serves fallback slots, not a 500."""
+    mock_executor = MagicMock()
+    mock_executor.invoke.side_effect = Exception("404 model not found")
+
+    with patch("app.services.ai_service.create_tool_calling_agent", return_value=MagicMock()), \
+         patch("app.services.ai_service.AgentExecutor", return_value=mock_executor), \
+         patch("app.services.ai_service.ChatGoogleGenerativeAI", return_value=MagicMock()), \
+         patch("app.services.ai_service.PreferencesService.get_preferences", return_value={"no_meetings": []}):
+        result = AIService.rank_slots(FAKE_SLOTS, user_tz="UTC")
+
+    assert "error" not in result
+    assert result["llm_fallback"] == "llm_api_error"
+    assert all(s in FAKE_SLOTS for s in result["suggested_slots"])
+
+
+def test_all_invalid_slots_serves_top_legal_slots():
+    """LLM returning only hallucinated slots degrades to top legal slots with a note."""
+    import json
+    hallucinated = json.dumps({
+        "slots": [{"start": "2026-03-01T11:00:00+00:00", "end": "2026-03-01T12:00:00+00:00"}],
+        "message": "Here you go!",
+    })
+    result, temps, calls = _run_rank_slots_with_outputs([hallucinated])
+
+    assert calls == 1  # parsed fine, no retry
+    assert "error" not in result
+    assert result["suggested_slots"] == FAKE_SLOTS  # top legal slots served instead
+    assert "(Note:" in result["ai_message"]
