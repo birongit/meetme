@@ -66,11 +66,17 @@ def _sat_sun_mon(dt: datetime) -> bool:
 CASES = [
     # ── happy ────────────────────────────────────────────────────────────────
     EvalCase(id="initial-no-feedback", group="happy"),
+    # Feedback rounds see no slot list (bare-bones round-2 prompt), so calling
+    # fetch_available_slots is the model's only legitimate data source — every
+    # feedback case carries expect_tool.
     EvalCase(id="mornings", group="happy", user_feedback="mornings please",
+             expect_tool="fetch_available_slots",
              slot_constraint=_is_morning, constraint_desc="start before 12:00"),
     EvalCase(id="weekends-only", group="happy", user_feedback="only weekends",
+             expect_tool="fetch_available_slots",
              slot_constraint=_is_weekend, constraint_desc="Saturday or Sunday"),
     EvalCase(id="next-tuesday", group="happy", user_feedback="next Tuesday",
+             expect_tool="fetch_available_slots",
              slot_constraint=_is_tuesday, constraint_desc="a Tuesday",
              min_slots=1),  # only one Tuesday in range; 5+ may be impossible
     # ── failure-replay ───────────────────────────────────────────────────────
@@ -80,10 +86,12 @@ CASES = [
              slot_constraint=_next_week_or_later, constraint_desc=">= 7 days out"),
     EvalCase(id="weekends-please-jul12", group="failure-replay",
              user_feedback="only weekends please",
+             expect_tool="fetch_available_slots",
              slot_constraint=_is_weekend, constraint_desc="Saturday or Sunday"),
     EvalCase(id="empty-output-jul12", group="failure-replay", calendar="dense"),
     EvalCase(id="long-weekend-aug30", group="failure-replay",
              user_feedback="something on a long weekend, Saturday through Monday",
+             expect_tool="fetch_available_slots",
              slot_constraint=_sat_sun_mon, constraint_desc="Sat, Sun, or Mon"),
     # ── tool-discipline ──────────────────────────────────────────────────────
     EvalCase(id="week-after-next", group="tool-discipline",
@@ -106,5 +114,6 @@ CASES = [
     EvalCase(id="dense-calendar", group="edge", calendar="dense"),
     EvalCase(id="impossible-time", group="edge",
              user_feedback="3am would be perfect",
+             expect_tool="fetch_available_slots",
              min_slots=1),  # no 3am slots exist; any legal suggestion is fine
 ]

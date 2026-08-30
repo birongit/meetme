@@ -8,6 +8,7 @@ calendar. Deterministic checks only — no LLM-as-judge.
 Each case records named check results into the session scorecard
 (evals/results/) so runs can be diffed across models and migrations.
 """
+import time
 import uuid
 from datetime import datetime, timedelta
 from unittest.mock import patch
@@ -64,12 +65,14 @@ def run_case(case: EvalCase):
         return slots
 
     legal = mock_get_available_slots()
+    t0 = time.monotonic()
     with patch("app.services.ai_service.CalendarService.get_available_slots",
                side_effect=mock_get_available_slots):
         result = AIService.rank_slots(
             legal, case.user_feedback, user_tz="America/Los_Angeles",
             session_id=RUN_ID,
         )
+    latency_s = round(time.monotonic() - t0, 2)
 
     suggested = result.get("suggested_slots", [])
     tools_called = [s["tool"] for s in result.get("agent_steps", [])]
@@ -89,13 +92,13 @@ def run_case(case: EvalCase):
             case.slot_constraint(datetime.fromisoformat(s["start"]))
             for s in suggested
         )
-    return result, checks
+    return result, checks, latency_s
 
 
 @pytest.mark.eval
 @pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
 def test_eval(case: EvalCase):
-    result, checks = run_case(case)
+    result, checks, latency_s = run_case(case)
     passed = all(checks.values())
     RESULTS.append({
         "id": case.id,
@@ -105,6 +108,8 @@ def test_eval(case: EvalCase):
         "checks": checks,
         "num_slots": len(result.get("suggested_slots", [])),
         "fallback": result.get("llm_fallback"),
+        "latency_s": latency_s,
+        "session": RUN_ID,
     })
     failed = [name for name, ok in checks.items() if not ok]
     assert passed, f"{case.id}: failed checks: {failed} (fallback={result.get('llm_fallback')})"

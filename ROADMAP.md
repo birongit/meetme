@@ -96,6 +96,17 @@ Current code uses `AgentExecutor` + `create_tool_calling_agent` — deprecated s
 
 **Skills demonstrated:** agent architecture, framework migration under test coverage.
 
+## Phase 7b: Eval iteration two (after migration)
+
+- LLM-as-judge scorer for the `message` field (tone, relevance).
+- Push runs to Langfuse experiments — native dashboards for cross-run/cross-model comparison instead of hand-built visualization.
+- Weekly scheduled run of the evals workflow (on-demand `workflow_dispatch` exists now) as drift detection — Google has silently degraded models twice.
+- Cost/token metrics per case (already queryable in Langfuse via the run's session id, recorded in each scorecard).
+
+## Phase 7c: Public write-up
+
+Once the eval-driven migration is complete: extend the README and write a standalone post — "one model deprecation broke prod twice, so I built observability, evals, and a measured migration." Scorecard diffs (baseline → post-migration → model bake-off) are the exhibits. Strong portfolio artifact.
+
 ## Phase 8: MCP server
 
 Expose slot search + booking as a [Model Context Protocol](https://modelcontextprotocol.io) server, so any MCP client (Claude, IDEs, other agents) can book meetings directly.

@@ -1,0 +1,36 @@
+name: Evals
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Gemini model to evaluate (empty = code default)"
+        required: false
+        default: ""
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run eval suite
+        working-directory: backend
+        env:
+          GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+          GEMINI_MODEL: ${{ inputs.model }}
+        run: pytest -m eval evals/ -v
+
+      - name: Upload scorecard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-scorecard
+          path: backend/evals/results/scorecard-*.json

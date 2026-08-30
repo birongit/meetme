@@ -17,12 +17,20 @@ def pytest_sessionfinish(session, exitstatus):
         by_group[r["group"]]["pass" if r["passed"] else "fail"] += 1
     total = len(RESULTS)
     passed = sum(1 for r in RESULTS if r["passed"])
+    latencies = sorted(r["latency_s"] for r in RESULTS if "latency_s" in r)
     scorecard = {
         "run_at": datetime.now().isoformat(timespec="seconds"),
         "model": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite (default)"),
         "pass_rate": round(passed / total, 3),
         "passed": passed,
         "total": total,
+        "latency_s": {
+            "mean": round(sum(latencies) / len(latencies), 2),
+            "p50": latencies[len(latencies) // 2],
+            "max": latencies[-1],
+        } if latencies else None,
+        # Cost/tokens per case live in Langfuse under this session id
+        "langfuse_session": RESULTS[0].get("session") if RESULTS else None,
         "by_group": {g: dict(v) for g, v in sorted(by_group.items())},
         "cases": RESULTS,
     }
