@@ -1,0 +1,250 @@
+{
+  "run_at": "2026-08-30T11:02:14",
+  "model": "gemini-2.5-flash-lite (default)",
+  "pass_rate": 0.643,
+  "passed": 9,
+  "total": 14,
+  "by_group": {
+    "edge": {
+      "pass": 2,
+      "fail": 1
+    },
+    "failure-replay": {
+      "pass": 3,
+      "fail": 1
+    },
+    "happy": {
+      "pass": 2,
+      "fail": 2
+    },
+    "tool-discipline": {
+      "pass": 2,
+      "fail": 1
+    }
+  },
+  "cases": [
+    {
+      "id": "initial-no-feedback",
+      "group": "happy",
+      "feedback": null,
+      "passed": true,
+      "checks": {
+        "no_fallback": true,
+        "has_slots": true,
+        "count_in_range": true,
+        "slots_legal": true,
+        "message_nonempty": true
+      },
+      "num_slots": 6,
+      "fallback": null
+    },
+    {
+      "id": "mornings",
+      "group": "happy",
+      "feedback": "mornings please",
+      "passed": false,
+      "checks": {
+        "no_fallback": false,
+        "has_slots": true,
+        "count_in_range": true,
+        "slots_legal": true,
+        "message_nonempty": true,
+        "constraint(start before 12:00)": false
+      },
+      "num_slots": 7,
+      "fallback": "unparseable_output"
+    },
+    {
+      "id": "weekends-only",
+      "group": "happy",
+      "feedback": "only weekends",
+      "passed": false,
+      "checks": {
+        "no_fallback": true,
+        "has_slots": true,
+        "count_in_range": false,
+        "slots_legal": true,
+        "message_nonempty": true,
+        "constraint(Saturday or Sunday)": true
+      },
+      "num_slots": 16,
+      "fallback": null
+    },
+    {
+      "id": "next-tuesday",
+      "group": "happy",
+      "feedback": "next Tuesday",
+      "passed": true,
+      "checks": {
+        "no_fallback": true,
+        "has_slots": true,
+        "count_in_range": true,
+        "slots_legal": true,
+        "message_nonempty": true,
+        "constraint(a Tuesday)": true
+      },
+      "num_slots": 8,
+      "fallback": null
+    },
+    {
+      "id": "week-after-jul08",
+      "group": "failure-replay",
+      "feedback": "What about the week after?",
+      "passed": true,
+      "checks": {
+        "no_fallback": true,
+        "has_slots": true,
+        "count_in_range": true,
+        "slots_legal": true,
+        "message_nonempty": true,
+        "tool_called": true,
+        "constraint(>= 7 days out)": true
+      },
+      "num_slots": 10,
+      "fallback": null
+    },
+    {
+      "id": "weekends-please-jul12",
+      "group": "failure-replay",
+      "feedback": "only weekends please",
+      "passed": false,
+      "checks": {
+        "no_fallback": false,
+        "has_slots": true,
+        "count_in_range": true,
+        "slots_legal": true,
+        "message_nonempty": true,
+        "constraint(Saturday or Sunday)": false
+      },
+      "num_slots": 7,
+      "fallback": "unparseable_output"
+    },
+    {
+      "id": "empty-output-jul12",
+      "group": "failure-replay",
+      "feedback": null,
+      "passed": true,
+      "checks": {
+        "no_fallback": true,
+        "has_slots": true,
+        "count_in_range": true,
+        "slots_legal": true,
+        "message_nonempty": true
+      },
+      "num_slots": 6,
+      "fallback": null
+    },
+    {
+      "id": "long-weekend-aug30",
+      "group": "failure-replay",
+      "feedback": "something on a long weekend, Saturday through Monday",
+      "passed": true,
+      "checks": {
+        "no_fallback": true,
+        "has_slots": true,
+        "count_in_range": true,
+        "slots_legal": true,
+        "message_nonempty": true,
+        "constraint(Sat, Sun, or Mon)": true
+      },
+      "num_slots": 8,
+      "fallback": null
+    },
+    {
+      "id": "week-after-next",
+      "group": "tool-discipline",
+      "feedback": "the week after next",
+      "passed": true,
+      "checks": {
+        "no_fallback": true,
+        "has_slots": true,
+        "count_in_range": true,
+        "slots_legal": true,
+        "message_nonempty": true,
+        "tool_called": true,
+        "constraint(>= 7 days out)": true
+      },
+      "num_slots": 10,
+      "fallback": null
+    },
+    {
+      "id": "in-three-weeks",
+      "group": "tool-discipline",
+      "feedback": "in about three weeks",
+      "passed": true,
+      "checks": {
+        "no_fallback": true,
+        "has_slots": true,
+        "count_in_range": true,
+        "slots_legal": true,
+        "message_nonempty": true,
+        "tool_called": true,
+        "constraint(>= 14 days out)": true
+      },
+      "num_slots": 10,
+      "fallback": null
+    },
+    {
+      "id": "tomorrow",
+      "group": "tool-discipline",
+      "feedback": "tomorrow if possible",
+      "passed": false,
+      "checks": {
+        "no_fallback": false,
+        "has_slots": true,
+        "count_in_range": true,
+        "slots_legal": true,
+        "message_nonempty": true,
+        "tool_called": true,
+        "constraint(<= 3 days out)": false
+      },
+      "num_slots": 7,
+      "fallback": "unparseable_output"
+    },
+    {
+      "id": "sparse-calendar",
+      "group": "edge",
+      "feedback": null,
+      "passed": true,
+      "checks": {
+        "no_fallback": true,
+        "has_slots": true,
+        "count_in_range": true,
+        "slots_legal": true,
+        "message_nonempty": true
+      },
+      "num_slots": 1,
+      "fallback": null
+    },
+    {
+      "id": "dense-calendar",
+      "group": "edge",
+      "feedback": null,
+      "passed": true,
+      "checks": {
+        "no_fallback": true,
+        "has_slots": true,
+        "count_in_range": true,
+        "slots_legal": true,
+        "message_nonempty": true
+      },
+      "num_slots": 6,
+      "fallback": null
+    },
+    {
+      "id": "impossible-time",
+      "group": "edge",
+      "feedback": "3am would be perfect",
+      "passed": false,
+      "checks": {
+        "no_fallback": false,
+        "has_slots": true,
+        "count_in_range": true,
+        "slots_legal": true,
+        "message_nonempty": true
+      },
+      "num_slots": 7,
+      "fallback": "unparseable_output"
+    }
+  ]
+}
